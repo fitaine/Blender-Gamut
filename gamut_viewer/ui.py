@@ -104,7 +104,7 @@ class GamutViewerSettings(bpy.types.PropertyGroup):
                               update=lambda s, c: gscene.set_point_radius(s.point_size))
     shell_opacity: FloatProperty(name="Shell Opacity", default=0.12, min=0.0, max=1.0, subtype='FACTOR',
                                  update=lambda s, c: gscene.set_shell_opacity(s.shell_opacity))
-    sync_views: BoolProperty(name="Sync Views", default=False,
+    sync_views: BoolProperty(name="Sync Views", default=True,
                              description="Orbit, pan and zoom all four viewers together",
                              update=lambda s, c: sync.start() if s.sync_views else None)
     shell_coloured: BoolProperty(name="Coloured Shell", default=True,
@@ -138,6 +138,8 @@ def ensure_settings(context, source=None):
     gscene.set_point_radius(s.point_size)
     gscene.set_shell_opacity(s.shell_opacity)
     gscene.set_shell_coloured(s.shell_coloured)
+    if s.sync_views:
+        sync.start()
     return s
 
 

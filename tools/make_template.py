@@ -124,6 +124,7 @@ class Maker:
             viewers, preview, options = workspace.areas(w)
             for area in viewers:
                 workspace.style_viewer(area.spaces.active)
+                workspace.style_dormant(area.spaces.active)
             workspace.style_preview(preview.spaces.active)
             workspace.style_options(options.spaces.active)
             self.step = "context"
@@ -133,10 +134,27 @@ class Maker:
             _, _, options = workspace.areas(w)
             options.spaces.active.context = workspace.OPTIONS_TAB
             print("areas:", [(a.type, a.x, a.y, a.width, a.height) for a in w.screen.areas])
+            # Pin an empty Gamut scene to the workspace, so that adding it from the + menu
+            # opens straight onto that scene and Blender itself remembers the user's scene.
+            gamut = bpy.data.scenes.new(workspace.gscene.SCENE_NAME)
+            gamut.world = None
+            w.scene = gamut
+            self.ws.use_pin_scene = True
+            w.workspace = self.layout            # leaving a pinned workspace records its scene
+            self.step = "back"
+            return TICK
+
+        if self.step == "back":
+            if w.workspace != self.layout:
+                return TICK
+            w.workspace = self.ws
             self.step = "strip"
             return TICK
 
         if self.step == "strip":
+            if w.workspace != self.ws:
+                return TICK
+            print("scene on the Gamut workspace:", w.scene.name)
             # the + menu lists every workspace in the template file, so keep only Gamut
             others = [x for x in bpy.data.workspaces if x != self.ws]
             bpy.data.batch_remove(ids=others)

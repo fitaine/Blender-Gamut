@@ -24,7 +24,7 @@ TEMPLATE_NAME = "Print"                 # the + menu shows it as "Print > Gamut"
 OLD_TEMPLATE_NAMES = ("Gamut_Viewer",)  # names used by earlier versions, cleaned up on install
 TAG = "gamut_viewer_workspace"
 TICK = 0.05
-WATCH = 0.2
+WATCH = 0.1
 
 busy = False
 
@@ -100,6 +100,19 @@ def style_viewer(space):
     r3d.view_distance = 2.8
 
 
+def style_dormant(space):
+    """How the template saves the viewers: Solid shading and nothing in view.
+
+    Blender shows the user's scene in a freshly added workspace until the add-on
+    switches it to the Gamut scene. Material Preview on a heavy scene (a
+    100-million-point cloud, say) could stall Blender, so the viewers start cheap
+    and empty, and style_viewer() turns them on once the Gamut scene is in.
+    """
+    space.shading.type = 'SOLID'
+    space.clip_start = 0.001
+    space.clip_end = 0.0011
+
+
 def style_preview(space):
     space.show_region_ui = False
     space.show_region_toolbar = False
@@ -126,12 +139,28 @@ def areas(window):
 
 # ---------------------------------------------------------------- wiring a Gamut workspace into this file
 
+WIRED = "gamut_viewer_wired"
+
+
+def _is_gamut_scene(scene):
+    return scene is not None and (scene.name == gscene.SCENE_NAME or scene.name.startswith(gscene.SCENE_NAME + "."))
+
+
 class _Configure:
-    """Wire the active Gamut workspace to the Gamut scene, then pin it."""
+    """Fill in a Gamut workspace that was just added.
+
+    The template pins an empty Gamut scene to the workspace, so Blender opens it
+    straight onto that scene and remembers the user's scene by itself. Templates
+    without a pinned scene fall back to switching scenes by hand and hopping out
+    and back once, which Blender needs to learn the user's scene.
+    """
 
     def __init__(self, window, ws):
         self.window, self.ws = window, ws
-        self.source = window.scene if window.scene.name != gscene.SCENE_NAME else None
+        self.hop = not ws.use_pin_scene       # templates from before the pinned scene need the hop
+        self.source = bpy.data.scenes.get(_last_scene.get(window.as_pointer(), ""))
+        if self.source is None and not _is_gamut_scene(window.scene):
+            self.source = window.scene
         self.step, self.wait = "wire", 0
 
     def __call__(self):
@@ -146,14 +175,28 @@ class _Configure:
             busy = False
         return result
 
+    def _adopt_scene(self):
+        """Use the file's own Gamut scene; drop the empty copy the template brought if there is one."""
+        w = self.window
+        pinned = w.scene if _is_gamut_scene(w.scene) else None
+        existing = gscene.get_scene()
+        if pinned is not None and existing is None:
+            pinned.name = gscene.SCENE_NAME
+        target = gscene.ensure_scene()
+        if w.scene != target:
+            w.scene = target
+        if pinned is not None and pinned != target and pinned.users <= 1:
+            bpy.data.scenes.remove(pinned)
+        return target
+
     def run(self):
         w = self.window
         if self.step == "wire":
             if w.workspace != self.ws:
                 return None
             from . import ui
+            self._adopt_scene()
             s = ui.ensure_settings(bpy.context, self.source)
-            w.scene = gscene.get_scene()
             for i in range(gscene.VIEWER_COUNT):
                 ui.evaluate_viewer(i, s)
             self.step = "viewers"
@@ -166,12 +209,10 @@ class _Configure:
                 space.use_local_collections = True
                 with bpy.context.temp_override(**_override(w, area), space_data=space):
                     bpy.ops.object.hide_collection(collection_index=index + 1, extend=False)
+                style_viewer(space)
             if preview is not None:
                 from .render import preview_image
                 preview.spaces.active.image = preview_image()
-            for area in viewers:
-                area.spaces.active.show_region_tool_header = False
-            if preview is not None:
                 preview.spaces.active.show_region_tool_header = False
             if options is not None:
                 style_options(options.spaces.active)
@@ -179,6 +220,9 @@ class _Configure:
                     options.spaces.active.context = OPTIONS_TAB
                 except TypeError:
                     pass
+            self.ws[WIRED] = True
+            if not self.hop:
+                return None
             self.ws.use_pin_scene = True
             if self.source is None:
                 return None
@@ -201,11 +245,29 @@ class _Configure:
         return None
 
 
+def _show_gamut_scene(window):
+    sc = gscene.get_scene()
+    if sc is None:
+        sc = bpy.data.scenes.new(gscene.SCENE_NAME)
+        sc.world = None
+    if window.scene != sc:
+        window.scene = sc
+
+
 def _needs_wiring(ws):
-    return ws.get(TAG) and not ws.use_pin_scene
+    if not ws.get(TAG) or ws.get(WIRED):
+        return False
+    # set up by an earlier version, which did not set the flag: its viewers use local collections
+    for screen in ws.screens:
+        for area in screen.areas:
+            if area.type == 'VIEW_3D' and area.spaces.active.use_local_collections:
+                ws[WIRED] = True
+                return False
+    return True
 
 
 _came_from = {}          # window -> name of the last non-Gamut workspace, for the scene hop
+_last_scene = {}         # window -> name of the last scene shown outside the Gamut workspace
 
 
 def _watch():
@@ -214,12 +276,16 @@ def _watch():
     for window in bpy.context.window_manager.windows:
         if window.workspace is not None and not window.workspace.get(TAG):
             _came_from[window.as_pointer()] = window.workspace.name
+            if not _is_gamut_scene(window.scene):
+                _last_scene[window.as_pointer()] = window.scene.name
     if not busy:
         for window in bpy.context.window_manager.windows:
             ws = window.workspace
             if ws is not None and _needs_wiring(ws):
                 busy = True
-                bpy.app.timers.register(_Configure(window, ws), first_interval=TICK)
+                job = _Configure(window, ws)
+                _show_gamut_scene(window)            # right away, before Blender draws the tab again
+                bpy.app.timers.register(job, first_interval=TICK)
                 break
     return WATCH
 
