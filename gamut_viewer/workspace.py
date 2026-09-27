@@ -1,12 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Gamut workspace: a 2 x 2 grid of 3D viewers, and the render with the controls on the right.
+"""The Gamut workspace.
 
-Blender only switches workspace and recomputes area sizes when it redraws,
-so the layout is built one step per timer tick, never in a single call.
-The user's current workspace is duplicated and only the duplicate is edited.
+The layout ships as an app template (app_template/startup.blend), which puts
+"Gamut Viewer > Gamut" in the + menu of the workspace tabs. Whenever a Gamut
+workspace becomes active and is not wired up yet, a watcher finishes the job:
+Gamut scene, one gamut per viewer, pinned scene.
+
+Blender only switches workspace and recomputes areas when it redraws, so
+everything here runs one step per timer tick.
 """
 
 import math
+import os
+import shutil
 
 import bpy
 from mathutils import Euler
@@ -14,10 +20,12 @@ from mathutils import Euler
 from . import scene as gscene
 
 WORKSPACE_NAME = "Gamut"
+TEMPLATE_NAME = "Gamut_Viewer"          # shown as "Gamut Viewer" in Blender's menus
 TAG = "gamut_viewer_workspace"
 TICK = 0.05
+WATCH = 0.2
 
-building = False       # True while a _Builder is running
+busy = False
 
 
 def find_workspace():
@@ -27,101 +35,101 @@ def find_workspace():
     return None
 
 
-def _area(window, pointer):
-    return next((a for a in window.screen.areas if a.as_pointer() == pointer), None)
+# ---------------------------------------------------------------- app template
 
+def template_source():
+    return os.path.join(os.path.dirname(__file__), "app_template", "startup.blend")
+
+
+def template_dir():
+    return bpy.utils.user_resource('SCRIPTS', path=os.path.join("startup", "bl_app_templates_user", TEMPLATE_NAME))
+
+
+def install_template():
+    src = template_source()
+    if not os.path.isfile(src):
+        return
+    dst = template_dir()
+    os.makedirs(dst, exist_ok=True)
+    shutil.copy2(src, os.path.join(dst, "startup.blend"))
+    with open(os.path.join(dst, "gamut_viewer.txt"), "w", encoding="utf-8") as f:
+        f.write("Installed by the Gamut Viewer add-on. Removed when the add-on is disabled.\n")
+
+
+def uninstall_template():
+    dst = template_dir()
+    if os.path.isfile(os.path.join(dst, "gamut_viewer.txt")):
+        shutil.rmtree(dst, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- area setup (shared by the template maker)
 
 def _override(window, area):
     region = next(r for r in area.regions if r.type == 'WINDOW')
     return dict(window=window, screen=window.screen, area=area, region=region)
 
 
-def _split(window, area, direction, factor):
-    before = {a.as_pointer() for a in window.screen.areas}
-    with bpy.context.temp_override(**_override(window, area)):
-        bpy.ops.screen.area_split(direction=direction, factor=factor)
-    new = next(a for a in window.screen.areas if a.as_pointer() not in before)
-    return new.as_pointer()
-
-
-def _setup_viewer(window, area, index):
-    space = area.spaces.active
+def style_viewer(space):
     space.show_region_toolbar = False
     space.show_region_ui = False
     space.show_region_tool_header = False
     space.lens = 35
     space.clip_start = 0.001
     space.clip_end = 100.0
-
     sh = space.shading
     sh.type = 'MATERIAL'
     sh.use_scene_world = False
     sh.use_scene_lights = False
     sh.studiolight_background_alpha = 0.0
-
     ov = space.overlay
     for attr in ("show_floor", "show_axis_x", "show_axis_y", "show_axis_z", "show_cursor",
                  "show_object_origins", "show_extras", "show_outline_selected",
                  "show_relationship_lines", "show_text", "show_stats"):
         if hasattr(ov, attr):
             setattr(ov, attr, False)
-
     r3d = space.region_3d
     r3d.view_perspective = 'PERSP'
     r3d.view_location = (0.0, 0.0, 0.5)
     r3d.view_rotation = Euler((math.radians(62), 0.0, math.radians(35))).to_quaternion()
     r3d.view_distance = 2.8
 
-    # show only this viewer's collection, in this viewport only
-    space.use_local_collections = True
-    with bpy.context.temp_override(**_override(window, area), space_data=space):
-        bpy.ops.object.hide_collection(collection_index=index + 1, extend=False)
 
-
-def _setup_panel_area(area):
-    area.type = 'IMAGE_EDITOR'
-    space = area.spaces.active
-    from .render import preview_image
-    space.image = preview_image()
-    space.show_region_ui = True
+def style_preview(space):
+    space.show_region_ui = False
     space.show_region_toolbar = False
+    space.show_region_tool_header = False
 
 
-def _select_gamut_tab(area):
-    """Only works once the sidebar has drawn and knows its tabs."""
-    ui = next((r for r in area.regions if r.type == 'UI'), None)
-    try:
-        ui.active_panel_category = "Gamut"
-        return ui.active_panel_category == "Gamut"
-    except (TypeError, ValueError, AttributeError):
-        return False
+OPTIONS_TAB = 'WORLD'     # the Gamut scene has no world, so this tab only shows our panels
 
 
-def show_preview():
-    """Point every Image Editor in the Gamut workspace at the analysed render."""
-    ws = find_workspace()
-    from .render import preview_image
-    img = preview_image()
-    if ws is None or img is None:
-        return
-    for screen in ws.screens:
-        for area in screen.areas:
-            if area.type == 'IMAGE_EDITOR':
-                area.spaces.active.image = img
-                area.tag_redraw()
+def style_options(space):
+    for p in space.bl_rna.properties:
+        if p.identifier.startswith("show_properties_"):
+            setattr(space, p.identifier, p.identifier == "show_properties_" + OPTIONS_TAB.lower())
 
 
-class _Builder:
-    """Timer-driven, one screen operation per redraw."""
+def areas(window):
+    """(viewers top-left..bottom-right, preview area, options area) of the current screen."""
+    screen = window.screen
+    viewers = sorted((a for a in screen.areas if a.type == 'VIEW_3D'), key=lambda a: (-a.y, a.x))
+    preview = next((a for a in screen.areas if a.type == 'IMAGE_EDITOR'), None)
+    options = next((a for a in screen.areas if a.type == 'PROPERTIES'), None)
+    return viewers, preview, options
 
-    def __init__(self, window, ws, original_ws, source_scene, done=None):
-        self.window, self.ws, self.original_ws = window, ws, original_ws
-        self.source_scene, self.done = source_scene, done
-        self.step, self.wait = "switch", 0
-        self.a = {}
+
+# ---------------------------------------------------------------- wiring a Gamut workspace into this file
+
+class _Configure:
+    """Wire the active Gamut workspace to the Gamut scene, then pin it."""
+
+    def __init__(self, window, ws):
+        self.window, self.ws = window, ws
+        self.source = window.scene if window.scene.name != gscene.SCENE_NAME else None
+        self.step, self.wait = "wire", 0
 
     def __call__(self):
-        global building
+        global busy
         try:
             result = self.run()
         except Exception:
@@ -129,115 +137,118 @@ class _Builder:
             traceback.print_exc()
             result = None
         if result is None:
-            building = False
+            busy = False
         return result
 
     def run(self):
         w = self.window
-        if self.step == "switch":
+        if self.step == "wire":
             if w.workspace != self.ws:
-                self.wait += 1
-                return TICK if self.wait < 100 else None
-            w.scene = gscene.ensure_scene()
-            main = max(w.screen.areas, key=lambda a: a.width * a.height)
-            main.type = 'VIEW_3D'
-            self.a["main"] = main.as_pointer()
-            self.step = "close"
+                return None
+            from . import ui
+            s = ui.ensure_settings(bpy.context, self.source)
+            w.scene = gscene.get_scene()
+            for i in range(gscene.VIEWER_COUNT):
+                ui.evaluate_viewer(i, s)
+            self.step = "viewers"
             return TICK
 
-        if self.step == "close":
-            others = [a for a in w.screen.areas if a.as_pointer() != self.a["main"]]
-            if others:
-                with bpy.context.temp_override(**_override(w, others[0])):
-                    bpy.ops.screen.area_close()
-                return TICK
-            self.step = "split_right"
-            return TICK
-
-        if self.step == "split_right":
-            self.a["right"] = _split(w, _area(w, self.a["main"]), 'VERTICAL', 0.78)
-            self.step = "split_rows"
-            return TICK
-
-        if self.step == "split_rows":
-            main, right = _area(w, self.a["main"]), _area(w, self.a["right"])
-            if right.x < main.x:                       # keep the controls on the right
-                self.a["main"], self.a["right"] = self.a["right"], self.a["main"]
-            self.a["bottom"] = _split(w, _area(w, self.a["main"]), 'HORIZONTAL', 0.5)
-            self.step = "split_top"
-            return TICK
-
-        if self.step == "split_top":
-            top, bottom = _area(w, self.a["main"]), _area(w, self.a["bottom"])
-            if bottom.y > top.y:
-                self.a["main"], self.a["bottom"] = self.a["bottom"], self.a["main"]
-            self.a["top_right"] = _split(w, _area(w, self.a["main"]), 'VERTICAL', 0.5)
-            self.step = "split_bottom"
-            return TICK
-
-        if self.step == "split_bottom":
-            self.a["bottom_right"] = _split(w, _area(w, self.a["bottom"]), 'VERTICAL', 0.5)
-            self.step = "configure"
-            return TICK
-
-        if self.step == "configure":
-            viewers = sorted(
-                (a for a in w.screen.areas if a.as_pointer() != self.a["right"]),
-                key=lambda a: (-a.y, a.x))                # top-left, top-right, bottom-left, bottom-right
-            for index, area in enumerate(viewers):
-                _setup_viewer(w, area, index)
-            _setup_panel_area(_area(w, self.a["right"]))
+        if self.step == "viewers":
+            viewers, preview, options = areas(w)
+            for index, area in enumerate(viewers[:gscene.VIEWER_COUNT]):
+                space = area.spaces.active
+                space.use_local_collections = True
+                with bpy.context.temp_override(**_override(w, area), space_data=space):
+                    bpy.ops.object.hide_collection(collection_index=index + 1, extend=False)
+            if preview is not None:
+                from .render import preview_image
+                preview.spaces.active.image = preview_image()
+            for area in viewers:
+                area.spaces.active.show_region_tool_header = False
+            if preview is not None:
+                preview.spaces.active.show_region_tool_header = False
+            if options is not None:
+                style_options(options.spaces.active)
+                try:
+                    options.spaces.active.context = OPTIONS_TAB
+                except TypeError:
+                    pass
             self.ws.use_pin_scene = True
-            self.step = "tab"
+            if self.source is None:
+                return None
+            other = bpy.data.workspaces.get(_came_from.get(w.as_pointer(), ""))
+            if other is None or other == self.ws or other.use_pin_scene:
+                other = next((x for x in bpy.data.workspaces if x != self.ws and not x.use_pin_scene), None)
+            if other is None:
+                return None
+            w.workspace = other                  # hop out and back so Blender remembers the user's scene
+            self.step = "hop"
             return TICK
 
-        if self.step == "tab":
+        if self.step == "hop":
             self.wait += 1
-            if not _select_gamut_tab(_area(w, self.a["right"])) and self.wait < 140:
+            if w.workspace == self.ws and self.wait < 5:
                 return TICK
-            if self.source_scene is None:
-                self.step = "finish"
-            else:
-                self.step = "unpin_hop"
-                w.workspace = self.original_ws          # remember the user's scene for the way back
-            return TICK
-
-        if self.step == "unpin_hop":
-            if w.workspace != self.original_ws:
-                return TICK
-            w.scene = self.source_scene
+            w.scene = self.source
             w.workspace = self.ws
-            self.step = "finish"
-            return TICK
-
-        if self.step == "finish":
-            if w.workspace != self.ws:
-                return TICK
-            if self.done:
-                self.done()
             return None
         return None
 
 
-def open_workspace(context, source_scene, done=None):
-    global building
-    window = context.window
-    if building:
-        return None
-    gscene.ensure_scene()
+def _needs_wiring(ws):
+    return ws.get(TAG) and not ws.use_pin_scene
+
+
+_came_from = {}          # window -> name of the last non-Gamut workspace, for the scene hop
+
+
+def _watch():
+    """Finish any Gamut workspace that was just added from the + menu."""
+    global busy
+    for window in bpy.context.window_manager.windows:
+        if window.workspace is not None and not window.workspace.get(TAG):
+            _came_from[window.as_pointer()] = window.workspace.name
+    if not busy:
+        for window in bpy.context.window_manager.windows:
+            ws = window.workspace
+            if ws is not None and _needs_wiring(ws):
+                busy = True
+                bpy.app.timers.register(_Configure(window, ws), first_interval=TICK)
+                break
+    return WATCH
+
+
+def start_watching():
+    if not bpy.app.timers.is_registered(_watch):
+        bpy.app.timers.register(_watch, first_interval=WATCH, persistent=True)
+
+
+def stop_watching():
+    if bpy.app.timers.is_registered(_watch):
+        bpy.app.timers.unregister(_watch)
+
+
+def open_workspace(context):
+    """Switch to the Gamut workspace, adding it from the template if this file has none."""
     ws = find_workspace()
     if ws is not None:
-        window.workspace = ws
-        return ws
+        context.window.workspace = ws
+        return
+    if os.path.isfile(template_source()):
+        bpy.ops.workspace.append_activate(idname=WORKSPACE_NAME, filepath=template_source())
 
-    original_ws = window.workspace
-    before = {w.as_pointer() for w in bpy.data.workspaces}
-    with context.temp_override(window=window):
-        bpy.ops.workspace.duplicate()
-    ws = next(w for w in bpy.data.workspaces if w.as_pointer() not in before)
-    ws.name = WORKSPACE_NAME
-    ws[TAG] = True
-    window.workspace = ws
-    building = True
-    bpy.app.timers.register(_Builder(window, ws, original_ws, source_scene, done), first_interval=TICK)
-    return ws
+
+def show_preview():
+    """Point the preview area of every Gamut workspace at the analysed render."""
+    from .render import preview_image
+    img = preview_image()
+    if img is None:
+        return
+    for ws in bpy.data.workspaces:
+        if not ws.get(TAG):
+            continue
+        for screen in ws.screens:
+            for area in screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    area.spaces.active.image = img
+                    area.tag_redraw()

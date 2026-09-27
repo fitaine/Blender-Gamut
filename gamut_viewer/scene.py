@@ -237,6 +237,7 @@ def _axes_object(scene):
 def ensure_scene():
     """Create (or complete) the Gamut scene and return it."""
     scene = get_scene() or bpy.data.scenes.new(SCENE_NAME)
+    scene.world = None            # keeps the World tab free for the Gamut panels
     scene.view_settings.view_transform = 'Standard'
     scene.view_settings.look = 'None'
     scene.display_settings.display_device = 'sRGB'

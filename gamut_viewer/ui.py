@@ -144,14 +144,10 @@ def ensure_settings(context, source=None):
 class GAMUT_OT_setup(bpy.types.Operator):
     bl_idname = "gamut_viewer.setup"
     bl_label = "Open Gamut Workspace"
-    bl_description = "Create the Gamut workspace with four viewers, or switch to it"
+    bl_description = "Switch to the Gamut workspace, adding it if this file has none"
 
     def execute(self, context):
-        source = context.scene if context.scene.name != gscene.SCENE_NAME else None
-        s = ensure_settings(context, source)
-        for i in range(gscene.VIEWER_COUNT):
-            evaluate_viewer(i, s)
-        workspace.open_workspace(context, source)
+        workspace.open_workspace(context)
         return {'FINISHED'}
 
 
@@ -240,71 +236,125 @@ class GAMUT_OT_open_profiles(bpy.types.Operator):
 
 
 # ---------------------------------------------------------------- panels
+# They live in the Properties editor of the Gamut workspace, on the World tab. The Gamut
+# scene has no world, so Blender's own world panels stay hidden there, except the
+# "New World" selector, whose poll is wrapped below for that one scene only.
 
-def _draw(layout, context):
-    s = _settings(context)
-    if s is None or len(s.viewers) < gscene.VIEWER_COUNT:
-        layout.operator(GAMUT_OT_setup.bl_idname, icon='WORKSPACE')
-        return
-
-    col = layout.column(align=True)
-    col.prop(s, "source_scene")
-    col.prop(s, "slot", text="Slot")
-    row = layout.row()
-    row.scale_y = 1.5
-    row.operator(GAMUT_OT_analyze.bl_idname, icon='PLAY')
-    layout.prop(s, "sync_views", icon='LINKED' if s.sync_views else 'UNLINKED')
-
-    for i, v in enumerate(s.viewers):
-        box = layout.box()
-        head = box.row()
-        head.label(text=f"Viewer {i + 1}")
-        if v.outside_pct >= 0:
-            head.label(text=f"{v.outside_pct:.1f}% outside")
-        box.prop(v, "gamut", text="")
-        box.prop(v, "mode", text="")
-
-    col = layout.column(align=True)
-    col.prop(s, "sample_count")
-    col.prop(s, "point_size")
-    col.prop(s, "shell_opacity")
-    col.prop(s, "shell_coloured")
-    col.prop(s, "threshold")
-
-    box = layout.box()
-    box.label(text="ICC profiles", icon='FILE')
-    for g in gamuts.all_gamuts():
-        if g.id.startswith("icc:"):
-            r = box.row()
-            r.label(text=g.label, icon='ERROR' if g.error else 'NONE')
-            r.operator(GAMUT_OT_remove_icc.bl_idname, text="", icon='X', emboss=False).gamut = g.id
-    r = box.row(align=True)
-    r.operator(GAMUT_OT_add_icc.bl_idname, text="Add ICC…", icon='ADD')
-    r.operator(GAMUT_OT_open_profiles.bl_idname, text="", icon='FILE_FOLDER')
-
-
-class GAMUT_PT_image(bpy.types.Panel):
-    bl_space_type = 'IMAGE_EDITOR'
-    bl_region_type = 'UI'
-    bl_category = "Gamut"
-    bl_label = "Gamut Viewer"
-
-    def draw(self, context):
-        _draw(self.layout, context)
-
-
-class GAMUT_PT_view3d(bpy.types.Panel):
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "Gamut"
-    bl_label = "Gamut Viewer"
+class _GamutPanel:
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "world"
 
     @classmethod
     def poll(cls, context):
         return context.scene is not None and context.scene.name == gscene.SCENE_NAME
 
+
+class GAMUT_PT_render(_GamutPanel, bpy.types.Panel):
+    bl_label = "Render"
+    bl_order = 0
+
     def draw(self, context):
-        _draw(self.layout, context)
+        s = context.scene.gamut_viewer
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        col = layout.column()
+        col.prop(s, "source_scene")
+        col.prop(s, "slot", text="Slot")
+        row = layout.row()
+        row.scale_y = 1.5
+        row.operator(GAMUT_OT_analyze.bl_idname, icon='PLAY')
+        row = self.layout.row()
+        row.use_property_split = False
+        row.prop(s, "sync_views", toggle=True, icon='LINKED' if s.sync_views else 'UNLINKED')
+
+
+class GAMUT_PT_viewers(_GamutPanel, bpy.types.Panel):
+    bl_label = "Viewers"
+    bl_order = 1
+
+    def draw(self, context):
+        s = context.scene.gamut_viewer
+        for i, v in enumerate(s.viewers):
+            col = self.layout.column(align=True)
+            head = col.row()
+            head.label(text=f"Viewer {i + 1}")
+            if v.outside_pct >= 0:
+                head.label(text=f"{v.outside_pct:.1f}% outside")
+            col.prop(v, "gamut", text="")
+            col.prop(v, "mode", text="")
+            self.layout.separator(factor=0.5)
+
+
+class GAMUT_PT_display(_GamutPanel, bpy.types.Panel):
+    bl_label = "Display"
+    bl_order = 2
+
+    def draw(self, context):
+        s = context.scene.gamut_viewer
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        col = layout.column()
+        col.prop(s, "sample_count")
+        col.prop(s, "point_size")
+        col.prop(s, "shell_opacity")
+        col.prop(s, "shell_coloured")
+        col.prop(s, "threshold")
+
+
+class GAMUT_PT_profiles(_GamutPanel, bpy.types.Panel):
+    bl_label = "ICC Profiles"
+    bl_order = 3
+
+    def draw(self, context):
+        layout = self.layout
+        found = False
+        for g in gamuts.all_gamuts():
+            if g.id.startswith("icc:"):
+                found = True
+                r = layout.row()
+                r.label(text=g.label, icon='ERROR' if g.error else 'FILE')
+                r.operator(GAMUT_OT_remove_icc.bl_idname, text="", icon='X', emboss=False).gamut = g.id
+        if not found:
+            layout.label(text="No profiles yet")
+        r = layout.row(align=True)
+        r.operator(GAMUT_OT_add_icc.bl_idname, text="Add ICC…", icon='ADD')
+        r.operator(GAMUT_OT_open_profiles.bl_idname, text="", icon='FILE_FOLDER')
+
+
+def _is_gamut_scene(context):
+    return context.scene is not None and context.scene.name == gscene.SCENE_NAME
+
+
+_world_poll = None       # (had its own poll, original descriptor)
+
+
+def _hide_world_selector():
+    global _world_poll
+    cls = getattr(bpy.types, "WORLD_PT_context_world", None)
+    if cls is None or _world_poll is not None:
+        return
+    _world_poll = ("poll" in cls.__dict__, cls.__dict__.get("poll"))
+    original = cls.poll
+
+    def poll(c, context):
+        return False if _is_gamut_scene(context) else original(context)
+    cls.poll = classmethod(poll)
+
+
+def _restore_world_selector():
+    global _world_poll
+    cls = getattr(bpy.types, "WORLD_PT_context_world", None)
+    if cls is None or _world_poll is None:
+        return
+    had, desc = _world_poll
+    if had:
+        cls.poll = desc
+    else:
+        del cls.poll
+    _world_poll = None
 
 
 # ---------------------------------------------------------------- viewer labels
@@ -345,12 +395,8 @@ def _draw_label():
 classes = (
     GamutViewerItem, GamutViewerSettings,
     GAMUT_OT_setup, GAMUT_OT_analyze, GAMUT_OT_add_icc, GAMUT_OT_remove_icc, GAMUT_OT_open_profiles,
-    GAMUT_PT_image, GAMUT_PT_view3d,
+    GAMUT_PT_render, GAMUT_PT_viewers, GAMUT_PT_display, GAMUT_PT_profiles,
 )
-
-
-def menu_entry(self, context):
-    self.layout.operator(GAMUT_OT_setup.bl_idname, icon='WORKSPACE')
 
 
 @persistent
@@ -365,7 +411,9 @@ def register():
     for c in classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.gamut_viewer = PointerProperty(type=GamutViewerSettings)
-    bpy.types.IMAGE_MT_view.append(menu_entry)
+    workspace.install_template()
+    workspace.start_watching()
+    _hide_world_selector()
     _handle = bpy.types.SpaceView3D.draw_handler_add(_draw_label, (), 'WINDOW', 'POST_PIXEL')
     bpy.app.handlers.load_post.append(_on_load)
 
@@ -378,7 +426,9 @@ def unregister():
     if _handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_handle, 'WINDOW')
         _handle = None
-    bpy.types.IMAGE_MT_view.remove(menu_entry)
+    _restore_world_selector()
+    workspace.stop_watching()
+    workspace.uninstall_template()
     del bpy.types.Scene.gamut_viewer
     for c in reversed(classes):
         bpy.utils.unregister_class(c)
