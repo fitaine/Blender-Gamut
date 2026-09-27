@@ -15,7 +15,7 @@ See your render's colours as a 3D point cloud inside screen and print gamuts, an
 1. Download the zip for your system from the [Releases](https://github.com/fitaine/Blender-Gamut/releases) page (Windows, macOS Apple Silicon, macOS Intel or Linux).
 2. In Blender, go to **Edit > Preferences > Get Extensions**, open the **▾** menu at the top right and choose **Install from Disk**. Pick the zip.
 
-Needs Blender 5.0 or newer. Tested on Blender 5.0 and 5.1 on Windows; the macOS and Linux builds are not tested yet. Nothing else to install: the colour engine (LittleCMS, through Pillow) comes inside the zip.
+Needs Blender 5.0 or newer. Tested on Blender 5.0 on Windows (Blender 5.1: analysis tested, workspace not yet). The macOS and Linux builds are not tested yet. Nothing else to install: the colour engine (LittleCMS, through Pillow) comes inside the zip.
 
 ## Use
 
