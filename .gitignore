@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+gamut_viewer/wheels/
+dist/
