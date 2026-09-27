@@ -2,7 +2,7 @@
 """The Gamut workspace.
 
 The layout ships as an app template (app_template/startup.blend), which puts
-"Gamut Viewer > Gamut" in the + menu of the workspace tabs. Whenever a Gamut
+"Print > Gamut" in the + menu of the workspace tabs. Whenever a Gamut
 workspace becomes active and is not wired up yet, a watcher finishes the job:
 Gamut scene, one gamut per viewer, pinned scene.
 
@@ -20,7 +20,8 @@ from mathutils import Euler
 from . import scene as gscene
 
 WORKSPACE_NAME = "Gamut"
-TEMPLATE_NAME = "Gamut_Viewer"          # shown as "Gamut Viewer" in Blender's menus
+TEMPLATE_NAME = "Print"                 # the + menu shows it as "Print > Gamut"
+OLD_TEMPLATE_NAMES = ("Gamut_Viewer",)  # names used by earlier versions, cleaned up on install
 TAG = "gamut_viewer_workspace"
 TICK = 0.05
 WATCH = 0.2
@@ -41,11 +42,18 @@ def template_source():
     return os.path.join(os.path.dirname(__file__), "app_template", "startup.blend")
 
 
-def template_dir():
-    return bpy.utils.user_resource('SCRIPTS', path=os.path.join("startup", "bl_app_templates_user", TEMPLATE_NAME))
+def template_dir(name=TEMPLATE_NAME):
+    return bpy.utils.user_resource('SCRIPTS', path=os.path.join("startup", "bl_app_templates_user", name))
+
+
+def _remove_ours(folder):
+    if os.path.isfile(os.path.join(folder, "gamut_viewer.txt")):
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def install_template():
+    for old in OLD_TEMPLATE_NAMES:
+        _remove_ours(template_dir(old))
     src = template_source()
     if not os.path.isfile(src):
         return
@@ -57,9 +65,7 @@ def install_template():
 
 
 def uninstall_template():
-    dst = template_dir()
-    if os.path.isfile(os.path.join(dst, "gamut_viewer.txt")):
-        shutil.rmtree(dst, ignore_errors=True)
+    _remove_ours(template_dir())
 
 
 # ---------------------------------------------------------------- area setup (shared by the template maker)

@@ -1,4 +1,4 @@
-"""Rebuild gamut_viewer/app_template/startup.blend, the file behind + > Gamut Viewer > Gamut.
+"""Rebuild gamut_viewer/app_template/startup.blend, the file behind + > Print > Gamut.
 
 Run with Blender's interface (screen layouts cannot be built in background mode):
 
@@ -133,13 +133,18 @@ class Maker:
             _, _, options = workspace.areas(w)
             options.spaces.active.context = workspace.OPTIONS_TAB
             print("areas:", [(a.type, a.x, a.y, a.width, a.height) for a in w.screen.areas])
-            w.workspace = self.layout          # the template opens on Layout for File > New
+            self.step = "strip"
+            return TICK
+
+        if self.step == "strip":
+            # the + menu lists every workspace in the template file, so keep only Gamut
+            others = [x for x in bpy.data.workspaces if x != self.ws]
+            bpy.data.batch_remove(ids=others)
             self.step = "save"
             return TICK
 
         if self.step == "save":
-            if w.workspace != self.layout:
-                return TICK
+            print("workspaces kept:", [x.name for x in bpy.data.workspaces])
             os.makedirs(os.path.dirname(OUT), exist_ok=True)
             bpy.ops.wm.save_as_mainfile(filepath=OUT, compress=True, copy=True)
             print("saved", OUT, os.path.getsize(OUT))

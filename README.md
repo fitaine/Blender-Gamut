@@ -20,7 +20,7 @@ Needs Blender 5.0 or newer. Tested on Blender 5.0 and 5.1 on Windows. The macOS 
 ## Use
 
 1. Render your image with **F12**.
-2. Click **+** at the end of the workspace tabs and choose **Gamut Viewer > Gamut**. The workspace sets itself up the first time: four viewers, the render on the top right, the options below it.
+2. Click **+** at the end of the workspace tabs and choose **Print > Gamut**. The workspace sets itself up the first time: four viewers, the render on the top right, the options below it.
 3. In the options, choose the scene and render slot to read, then click **Analyse Render**.
 4. Pick a gamut for each of the four viewers. Orbit, pan and zoom in each viewer as in any 3D view, or tick **Sync Views** to move all four together.
 
@@ -37,7 +37,7 @@ The render is read the way it would be saved, with your view transform, look and
 
 The Gamut workspace shows its own scene, so switching back to your other workspaces brings your scene back. To render again, go back to your scene's workspace, press F12, then return and click **Analyse Render**.
 
-Enabling the add-on also installs a small app template, which is what puts **Gamut Viewer** in the **+** menu. Because of that, *Gamut Viewer* also appears under **File > New**. Disabling the add-on removes it.
+Enabling the add-on also installs a small app template, which is what puts **Print > Gamut** in the **+** menu. Because of that, *Print* also appears under **File > New**. Disabling the add-on removes it.
 
 ## Adding paper and printer profiles
 
