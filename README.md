@@ -13,7 +13,7 @@ See your render's colours as a 3D point cloud inside screen and print gamuts, an
 ## Install
 
 1. Download the zip for your system from the [Releases](https://github.com/fitaine/Blender-Gamut/releases) page (Windows, macOS Apple Silicon, macOS Intel or Linux).
-2. In Blender, go to **Edit > Preferences > Get Extensions**, open the **▾** menu at the top right and choose **Install from Disk**. Pick the zip.
+2. In Blender, go to **Edit > Preferences > Get Extensions**, open the **▾** menu at the top right and choose **Install from Disk**. Pick the zip (don't unzip it).
 
 Needs Blender 5.0 or newer. Tested on Blender 5.0 and 5.1 on Windows. The macOS and Linux builds are not tested yet. Nothing else to install: the colour engine (LittleCMS, through Pillow) comes inside the zip.
 
@@ -22,13 +22,13 @@ Needs Blender 5.0 or newer. Tested on Blender 5.0 and 5.1 on Windows. The macOS 
 1. Render your image with **F12**.
 2. Click **+** at the end of the workspace tabs and choose **Print > Gamut**. The workspace sets itself up the first time: four viewers, the render on the top right, the options below it.
 3. In the options, choose the scene and render slot to read, then click **Analyse Render**.
-4. Pick a gamut for each of the four viewers. Orbit, pan and zoom in each viewer as in any 3D view, or tick **Sync Views** to move all four together.
+4. Pick a gamut for each of the four viewers. Orbit, pan and zoom as in any 3D view: with **Sync Views** (on by default) all four move together; untick it to move them one by one.
 
 The render is read the way it would be saved, with your view transform, look and exposure applied, so what you see is what goes into the file you print.
 
 | Setting | What it does |
 |---|---|
-| **Sync Views** | Orbit, pan and zoom all four viewers together |
+| **Sync Views** | Orbit, pan and zoom all four viewers together (on by default) |
 | **Show** (per viewer) | *True colour*, *Outside in red* or *Only outside* |
 | **Points** | How many pixels are sampled from the render |
 | **Point Size**, **Shell Opacity** | Display only |
@@ -67,6 +67,18 @@ The workspace layout lives in `gamut_viewer/app_template/startup.blend`. To chan
 ```
 blender --factory-startup --python tools/make_template.py
 ```
+
+## Publishing a new version
+
+1. Raise `version` in `gamut_viewer/blender_manifest.toml`, for example to `0.2.0`, and commit.
+2. Tag that commit with the same number and push the tag:
+
+```
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+GitHub then builds the four zips and publishes them on the Releases page by itself (see `.github/workflows/release.yml`). It takes a few minutes.
 
 ## Licence
 

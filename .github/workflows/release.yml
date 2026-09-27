@@ -1,0 +1,56 @@
+# Pushing a tag like v0.2.0 builds the four installable zips and publishes them as a GitHub release.
+# The tag must match `version` in gamut_viewer/blender_manifest.toml.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      BLENDER_VERSION: "5.0.1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches the manifest version
+        run: |
+          manifest=$(grep -E '^version *=' gamut_viewer/blender_manifest.toml | sed -E 's/.*"(.*)".*/\1/')
+          if [ "v$manifest" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest version $manifest"; exit 1
+          fi
+
+      - name: Get Blender
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libxi6 libxkbcommon0 libsm6 libgl1 libegl1 libxxf86vm1 libxfixes3 libxrender1 libx11-6
+          curl -sSL "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" | tar -xJ
+          echo "BLENDER=$PWD/blender-${BLENDER_VERSION}-linux-x64/blender" >> "$GITHUB_ENV"
+
+      - name: Build the zips
+        run: python tools/build.py --blender "$BLENDER"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          body: |
+            ### Install
+
+            1. Download the zip for your computer below:
+               - **Windows**: `gamut_viewer-…-windows_x64.zip`
+               - **Mac with Apple Silicon** (M1, M2, M3, M4): `…-macos_arm64.zip`
+               - **Mac with Intel**: `…-macos_x64.zip`
+               - **Linux**: `…-linux_x64.zip`
+            2. In Blender (5.0 or newer): **Edit > Preferences > Get Extensions**, open the **▾** menu at the top right, choose **Install from Disk** and pick the zip. Don't unzip it.
+            3. Click **+** at the end of the workspace tabs and choose **Print > Gamut**.
+
+            Full guide in the [README](https://github.com/fitaine/Blender-Gamut#readme).
